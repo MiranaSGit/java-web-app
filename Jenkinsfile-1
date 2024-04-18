@@ -1,15 +1,70 @@
 pipeline {
-  agent { label 'linux' }
-  options {
-    buildDiscarder(logRotator(numToKeepStr: '5'))
+  agent {
+    kubernetes {
+        cloud 'kubernetes'
+        yaml """\
+        metadata:
+          labels:
+            app: jenkins-agent
+        spec:
+          serviceAccountName: jenkins-sa-agent
+          volumes:
+            - name: maven-cache
+              hostPath:
+                path: "/root/.m2/repository"
+            - name: docker-socket
+              emptyDir: {}
+            - name: kube-config
+              hostPath:
+                path: /home/\$USER/.kube/
+          imagePullSecrets:
+            - name: reg-secret
+          containers:
+            - name: jnlp
+              env:
+                - name: CONTAINER_ENV_VAR
+                  value: jnlp
+            - name: maven
+              image: 992382555485.dkr.ecr.eu-west-1.amazonaws.com/maven:3.8.1-openjdk-17-slim
+              command:
+                - cat
+              tty: true
+              env:
+                - name: CONTAINER_ENV_VAR
+                  value: maven
+              volumeMounts:
+                - mountPath: "/root/.m2/repository"
+                  name: maven-cache
+            - name: docker
+              image: public.ecr.aws/docker/library/docker:20.10.23
+              command:
+                - sleep
+              args:
+                - 99d
+              volumeMounts:
+                - name: docker-socket
+                  mountPath: /var/run
+            - name: docker-daemon
+              image: public.ecr.aws/docker/library/docker:20.10.23-dind
+              securityContext:
+                privileged: true
+              volumeMounts:
+                - name: docker-socket
+                  mountPath: /var/run   
+      """.stripIndent()
+    }
   }
+
+
   stages {
     stage('Scan') {
       steps {
-        withSonarQubeEnv(installationName: 'sq1') { 
-          sh './mvnw clean org.sonarsource.scanner.maven:sonar-maven-plugin:3.9.0.2155:sonar'
+        container('maven') {
+            withSonarQubeEnv(installationName: 'sonarqube') { 
+            sh 'mvn clean org.sonarsource.scanner.maven:sonar-maven-plugin:3.9.0.2155:sonar'
+         }
         }
       }
-    }
+    } 
   }
 }
